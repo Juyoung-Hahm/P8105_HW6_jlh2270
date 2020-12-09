@@ -8,6 +8,8 @@ output: github_document
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(viridis)
+library(modelr)
+library(mgcv)
 knitr::opts_chunk$set(
 	echo = TRUE,
 	warning = FALSE,
@@ -131,72 +133,88 @@ summary(bweight_lm)
 ```
 plot of model residuals against fitted values
 Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
-```{r}
+```{r residuals against fitted values1}
 modelr::add_residuals(baby_df, bweight_lm)
 modelr::add_predictions(baby_df, bweight_lm)
 
-baby_df %>%
-  add_residuals(bweight_lm) %>%
-  add_predictions(bweight_lm) %>%
-  add_residuals(smooth_mod, var = "resid_loess") %>%
-  add_predictions(smooth_mod, var = "pred_loess")
-
 baby_df %>% 
   modelr::add_residuals(bweight_lm) %>% 
-  ggplot(aes(x = blength, y = resid)) + geom_point()
-
-baby_df %>% 
-  modelr::add_residuals(bweight_lm) %>% 
-  ggplot(aes(x = gaweeks, y = resid)) + geom_point()
-
-baby_df %>% 
-  modelr::add_residuals(bweight_lm) %>% 
-  ggplot(aes(x = momage, y = resid)) + geom_point()
-
-
+  ggplot(aes(x = blength, y = resid)) + 
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red")
 ```
-
-```{r}
-smooth_mod = mgcv::gam(bwt ~ s(gaweeks), data = baby_df)
-linear_mod = lm(bwt ~ gaweeks, data = baby_df)
-wiggly_mod = mgcv::gam(bwt ~ s(gaweeks, k = 30), sp = 10e-6, data = baby_df)
-
+This residuals against fitted values for `blength` is not well behaved because the values are not randomly bounced around the residual = 0. It doesn't form a horizontal band around the 0 line. Moreover, we can notice that some values stands out, indicating a outlier.
+```{r residuals against fitted values2}
 baby_df %>% 
-  gather_predictions(linear_mod, smooth_mod, wiggly_mod) %>% 
-  mutate(model = fct_inorder(model)) %>% 
-  ggplot(aes(x = gaweeks, y = bwt)) + 
-  geom_point() + 
-  geom_line(aes(y = pred), color = "red") + 
-  facet_wrap(~model)
+  modelr::add_residuals(bweight_lm) %>% 
+  ggplot(aes(x = gaweeks, y = resid)) + 
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red")
 ```
+This residuals against fitted values for `gaweeks` is well behaved because the values are randomly bounced around the residual = 0. It does form a horizontal band around the 0 line. But there are some outliers.
+```{r residuals against fitted values3}
+baby_df %>% 
+  modelr::add_residuals(bweight_lm) %>% 
+  ggplot(aes(x = momage, y = resid)) + 
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red")
+```
+Plotting the residuals against fitted values for `momage`, we can see thatthe values are randomly bounced around the residual = 0, but more left skewed. It forms a horizontal band around the 0 line. Also, we can notice that some values stands out, indicating that there are some outliers.
+
 
 Compare your model to two others:
 1.One using length at birth and gestational age as predictors (main effects only)
 2.One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
 ```{r}
-model_fit1 = lm(bwt ~ blength + gaweeks, data = baby_df)
-model_fit2 = lm(bwt ~ bhead*blength*babysex, data = baby_df)
+bweight_lm = lm(bwt ~ blength + gaweeks + momage, data = baby_df)
+model_fit_main = lm(bwt ~ blength + gaweeks, data = baby_df)
+model_fit_inter = lm(bwt ~ bhead*blength*babysex, data = baby_df)
 summary(model_fit1)
 summary(model_fit2)
 ```
 
 ```{r}
-anova(model_fit1, bweight_lm) %>% 
-  broom::tidy()
-```
-
-Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
-```{r}
-
-```
-
-
-```{r}
 baby_df %>% 
-  modelr::add_residuals(model_fit) %>% 
-  ggplot(aes(x = gaweeks, y = resid)) + 
-  geom_point()
+  gather_predictions(model_fit_main, bweight_lm, model_fit_inter) %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = blength, y = bwt)) + 
+  geom_point(alpha = .5) +
+  geom_line(aes(y = pred), color = "red") + 
+  facet_grid(~model)
+
+
+cv_df =
+  crossv_mc(baby_df, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    model_fit_main  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    bweight_lm     = map(train, ~lm(bwt ~ blength + gaweeks + momage, data = .x)),
+    model_fit_inter  = map(train, ~gam(bwt ~ s(blength), data = as_tibble(.x)))) %>% 
+  mutate(
+    model_fit_main = map2_dbl(linear_mod, test, ~rmse(model = .x, data = .y)),
+    bweight_lm    = map2_dbl(pwl_mod, test, ~rmse(model = .x, data = .y)),
+    model_fit_inter = map2_dbl(smooth_mod, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
 ```
+Looking at the models of the violin plot, the middle plot is the one I predicted for linear regression. it is similar to the left one, where it has two main effects(`blength`and `gaweeks`). We can say that there are more outliers for my model. If i were to choose between two models other than my model, I would choose the linear model because it is similar to my model, and the smooth model contains many outliers.
+
+
+
+
 
 # Problem 3
 ```{r}
@@ -211,5 +229,40 @@ weather_df =
     tmin = tmin / 10,
     tmax = tmax / 10) %>%
   select(name, id, everything())
+```
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r̂2
+ and log(β̂0∗β̂1). Note: broom::glance() is helpful for extracting r̂2
+ from a fitted regression, and broom::tidy() (with some additional wrangling) should help in computing log(β̂0∗β̂1).
+
+```{r}
+weather_lm = lm(tmax ~ tmin, data = weather_df)
+
+weather_df %>% 
+  ggplot(aes(x = tmin, y = tmax)) + 
+  geom_point() 
+```
+
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities.
+```{r}
+weather_rsq = summary(weather_lm)$r.squared 
+
+est = 
+  weather_lm %>% 
+  broom::tidy() %>% 
+  select(term, estimate) %>% 
+  pivot_wider(
+    names_from = "term",
+    values_from = "estimate"
+    )
+
+colnames(est) <- c("intercept", "tmin")
+
+est = tibble(est, log = log(pull(est, intercept) * pull(est, tmin) ) )
+est
+
+est = tibble(est, weather_rsq)
+colnames(est) <- c("intercept", "tmin", "log", "rsquared")
+est 
+
 ```
 
