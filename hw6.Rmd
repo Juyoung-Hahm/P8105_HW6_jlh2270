@@ -30,7 +30,7 @@ library(modelr)
 library(p8105.datasets)
 ```
 
-### Problem 1
+# Problem 1
 
 ```{r}
 homicide_df = 
@@ -103,7 +103,7 @@ models_results_df %>%
 
 
 
-## Problem 2
+# Problem 2
 
 Find some residuals
 
@@ -112,11 +112,84 @@ baby_df =
   read_csv("./birthweight.csv")
 ```
 
-fit a model
+Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+```{r}
+baby_df$babysex=as.factor(baby_df$babysex)
+baby_df$frace=as.factor(baby_df$frace)
+baby_df$malform=as.factor(baby_df$malform)
+baby_df$mrace=as.factor(baby_df$mrace)
+
+sum(is.na(baby_df))
+
+```
+
+propose linear regression model for `birthweight`
+```{r}
+bweight_lm = lm(bwt ~ blength + gaweeks + momage, data = baby_df)
+summary(bweight_lm)
+
+```
+plot of model residuals against fitted values
+Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+```{r}
+modelr::add_residuals(baby_df, bweight_lm)
+modelr::add_predictions(baby_df, bweight_lm)
+
+baby_df %>%
+  add_residuals(bweight_lm) %>%
+  add_predictions(bweight_lm) %>%
+  add_residuals(smooth_mod, var = "resid_loess") %>%
+  add_predictions(smooth_mod, var = "pred_loess")
+
+baby_df %>% 
+  modelr::add_residuals(bweight_lm) %>% 
+  ggplot(aes(x = blength, y = resid)) + geom_point()
+
+baby_df %>% 
+  modelr::add_residuals(bweight_lm) %>% 
+  ggplot(aes(x = gaweeks, y = resid)) + geom_point()
+
+baby_df %>% 
+  modelr::add_residuals(bweight_lm) %>% 
+  ggplot(aes(x = momage, y = resid)) + geom_point()
+
+
+```
 
 ```{r}
-model_fit = lm(bwt ~ gaweeks, data = baby_df)
+smooth_mod = mgcv::gam(bwt ~ s(gaweeks), data = baby_df)
+linear_mod = lm(bwt ~ gaweeks, data = baby_df)
+wiggly_mod = mgcv::gam(bwt ~ s(gaweeks, k = 30), sp = 10e-6, data = baby_df)
+
+baby_df %>% 
+  gather_predictions(linear_mod, smooth_mod, wiggly_mod) %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = gaweeks, y = bwt)) + 
+  geom_point() + 
+  geom_line(aes(y = pred), color = "red") + 
+  facet_wrap(~model)
 ```
+
+Compare your model to two others:
+1.One using length at birth and gestational age as predictors (main effects only)
+2.One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+```{r}
+model_fit1 = lm(bwt ~ blength + gaweeks, data = baby_df)
+model_fit2 = lm(bwt ~ bhead*blength*babysex, data = baby_df)
+summary(model_fit1)
+summary(model_fit2)
+```
+
+```{r}
+anova(model_fit1, bweight_lm) %>% 
+  broom::tidy()
+```
+
+Make this comparison in terms of the cross-validated prediction error; use crossv_mc and functions in purrr as appropriate.
+```{r}
+
+```
+
 
 ```{r}
 baby_df %>% 
@@ -124,3 +197,19 @@ baby_df %>%
   ggplot(aes(x = gaweeks, y = resid)) + 
   geom_point()
 ```
+
+# Problem 3
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+
