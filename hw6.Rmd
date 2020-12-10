@@ -114,7 +114,7 @@ baby_df =
   read_csv("./birthweight.csv")
 ```
 
-Load and clean the data for regression analysis (i.e. convert numeric to factor where appropriate, check for missing data, etc.).
+### Load and clean the data for regression analysis 
 ```{r}
 baby_df$babysex=as.factor(baby_df$babysex)
 baby_df$frace=as.factor(baby_df$frace)
@@ -125,14 +125,13 @@ sum(is.na(baby_df))
 
 ```
 
-propose linear regression model for `birthweight`
+### propose linear regression model for `birthweight`
 ```{r}
 bweight_lm = lm(bwt ~ blength + gaweeks + momage, data = baby_df)
 summary(bweight_lm)
 
 ```
-plot of model residuals against fitted values
-Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+### plot of model residuals against fitted values
 ```{r residuals against fitted values1}
 modelr::add_residuals(baby_df, bweight_lm)
 modelr::add_predictions(baby_df, bweight_lm)
@@ -162,15 +161,11 @@ baby_df %>%
 Plotting the residuals against fitted values for `momage`, we can see thatthe values are randomly bounced around the residual = 0, but more left skewed. It forms a horizontal band around the 0 line. Also, we can notice that some values stands out, indicating that there are some outliers.
 
 
-Compare your model to two others:
-1.One using length at birth and gestational age as predictors (main effects only)
-2.One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+### Compare your model to two others:
 ```{r}
 bweight_lm = lm(bwt ~ blength + gaweeks + momage, data = baby_df)
 model_fit_main = lm(bwt ~ blength + gaweeks, data = baby_df)
 model_fit_inter = lm(bwt ~ bhead*blength*babysex, data = baby_df)
-summary(model_fit1)
-summary(model_fit2)
 ```
 
 ```{r}
@@ -230,39 +225,46 @@ weather_df =
     tmax = tmax / 10) %>%
   select(name, id, everything())
 ```
-Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities. Plot the distribution of your estimates, and describe these in words. Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r̂2
- and log(β̂0∗β̂1). Note: broom::glance() is helpful for extracting r̂2
- from a fitted regression, and broom::tidy() (with some additional wrangling) should help in computing log(β̂0∗β̂1).
-
+### Use 5000 bootstrap samples
 ```{r}
-weather_lm = lm(tmax ~ tmin, data = weather_df)
+bootstrap_results 
 
-weather_df %>% 
-  ggplot(aes(x = tmin, y = tmax)) + 
-  geom_point() 
-```
-
-Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of these two quantities.
-```{r}
-weather_rsq = summary(weather_lm)$r.squared 
-
-est = 
-  weather_lm %>% 
-  broom::tidy() %>% 
-  select(term, estimate) %>% 
+bootstrap_results = 
+  weather_df %>%
+  bootstrap(n = 5000) %>%
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results1 = map(models, broom::glance),
+    results2 = map(models, broom::tidy)) %>% 
+  select(results1, results2) %>% 
+  unnest(results1) %>%
+  select(r.squared, results2) %>%
+  unnest(results2) %>%
+  select(r.squared, term, estimate) %>%
   pivot_wider(
     names_from = "term",
-    values_from = "estimate"
-    )
+    values_from = "estimate") %>%
+  rename(intercept = "(Intercept)") %>%
+  mutate(
+    log = log(intercept*tmin)
+  )
 
-colnames(est) <- c("intercept", "tmin")
+```
 
-est = tibble(est, log = log(pull(est, intercept) * pull(est, tmin) ) )
-est
+```{r}
+bootstrap_results %>%
+  ggplot(aes(x = r.squared, y = log)) + 
+  geom_point(alpha = .5) +
+  stat_smooth(method = "lm", se = FALSE)
+```
+We can see that there is a negative linear trend. Also, there is no outliers. 
 
-est = tibble(est, weather_rsq)
-colnames(est) <- c("intercept", "tmin", "log", "rsquared")
-est 
-
+### Identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval
+```{r}
+bootstrap_results %>% 
+  group_by(tmin) %>% 
+  summarize(
+    ci_lower = quantile(r.squared, 0.025), 
+    ci_upper = quantile(r.squared, 0.975))
 ```
 
